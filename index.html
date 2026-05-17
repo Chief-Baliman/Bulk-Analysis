@@ -53,7 +53,46 @@ function parseEuro(v){if(!v)return 0;let s=String(v).replace(/\s/g,"").replace(/
 function intVal(v){const n=parseInt(String(v||"").replace(/[^\d]/g,""),10);return Number.isFinite(n)?n:0}
 function detect(label){const n=norm(label);if(n.includes("pokemon deutsch")||n.includes("pokémon deutsch"))return"DE";if(n.includes("pokemon englisch")||n.includes("pokémon englisch"))return"EN";if(n.includes("pokemon japanisch")||n.includes("pokémon japanisch"))return"JP";return"Zubehör"}
 function type(label){const n=norm(label), l=detect(label);if(l==="DE"&&n.includes("non-holo"))return"deNonHolo";if(l==="DE"&&(n.includes("holo & reverse")||n.includes("reverse holo")))return"deHoloReverse";if(l==="DE"&&n.includes("trainer"))return"deTrainer";if(n.includes("energie"))return l==="DE"?"deEnergy":"energy";if(n.includes("illustration")||n.includes("art-rare")||n.includes("art rare")||n.includes("sar")||n.includes("rainbow")||n.includes("gold")||n.includes("hr")||n.includes("ur")||n.includes("alt-art")||n.includes("alt art"))return l+" High Hit";if(n.includes("full-art")||n.includes("full art")||n.includes("full-arts"))return l+" Full Art";if(n.includes("ex / v")||n.includes("vmax")||n.includes("vstar"))return l+" EX/V-VSTAR";if((l==="EN"||l==="JP")&&n.includes("karten bis"))return l+" Low Bulk";return l+" Sonstiges"}
-function parseMail(text){const compact=String(text||"").replace(/\u00a0/g," ").replace(/[–—]/g,"-").replace(/\s+/g," ").trim();const positions=[];const re=/((?:pokémon|pokemon)\s+(?:deutsch|englisch|japanisch)|sonstiges\s*&\s*zubehör|sonstiges\s*&\s*zubehoer)\s*:\s*(.*?)\s*:\s*([\d.]+)\s*x\s*([\d.,]+)\s*€\s*=\s*([\d.,]+)\s*€/gi;let m;while((m=re.exec(compact))!==null){const label=m[1].replace(/^pokemon/i,"Pokémon")+": "+m[2].trim();positions.push({label,qty:intVal(m[3]),unitPrice:parseEuro(m[4]),total:parseEuro(m[5]),lang:detect(label),type:type(label)})}return{statedValue:parseEuro((compact.match(/voraussichtliche\s+auszahlung\s*:\s*([\d.,]+\s*€?)/i)||[])[1])||positions.reduce((s,p)=>s+p.total,0),statedCards:intVal((compact.match(/kartenmenge\s*:\s*([\d.]+)/i)||[])[1])||positions.reduce((s,p)=>p.lang==="Zubehör"?s:s+p.qty,0),shippingStatus:((compact.match(/versandstatus\s*:\s*(.*?)(?=\s+positionen\s*:|\s+kundennachricht\s*:|\s+bestätigung|\s+bestaetigung|$)/i)||[])[1]||"").trim(),positions}}
+function parseMail(text){
+  const raw = String(text || "").replace(/\u00a0/g, " ").replace(/[–—]/g, "-");
+  const compact = raw.replace(/\s+/g, " ").trim();
+  const positions = [];
+  const re=/((?:pokémon|pokemon)\s+(?:deutsch|englisch|japanisch)|sonstiges\s*&\s*zubehör|sonstiges\s*&\s*zubehoer)\s*:\s*(.*?)\s*:\s*([\d.]+)\s*x\s*([\d.,]+)\s*€\s*=\s*([\d.,]+)\s*€/gi;
+  let m;
+  while((m=re.exec(compact))!==null){
+    const label=m[1].replace(/^pokemon/i,"Pokémon")+": "+m[2].trim();
+    positions.push({label,qty:intVal(m[3]),unitPrice:parseEuro(m[4]),total:parseEuro(m[5]),lang:detect(label),type:type(label)})
+  }
+
+  let shippingStatus = ((compact.match(/versandstatus\s*:\s*(.*?)(?=\s+positionen\s*:|\s+adresse\s+für\s+retourenlabel\s*:|\s+adresse\s+fuer\s+retourenlabel\s*:|\s+versandoption\s*:|\s+kundennachricht\s*:|\s+bestätigung|\s+bestaetigung|$)/i)||[])[1]||"").trim();
+
+  const selfShippingMention = /kunde\s+möchte\s+den\s+versand.*selbst\s+organisieren|kunde\s+moechte\s+den\s+versand.*selbst\s+organisieren|ich\s+möchte\s+den\s+versand\s+lieber\s+selbst|ich\s+moechte\s+den\s+versand\s+lieber\s+selbst/i.test(compact);
+  const noHigherOfferMention = /kein\s+h[oö]heres\s+ankaufangebot|kein\s+hoeheres\s+ankaufangebot|kein\s+höheres\s+ankaufangebot|dadurch\s+kein\s+h[oö]heres/i.test(compact);
+  const customerPaysShippingMention = /versandkosten.*vollständig\s+selbst|versandkosten.*vollstaendig\s+selbst|versandkosten.*kunde|vollständig\s+selbst\s+trägt|vollstaendig\s+selbst\s+traegt/i.test(compact);
+
+  let shippingChoice = "";
+  if (selfShippingMention) {
+    shippingChoice = "Kunde organisiert Versand trotz erreichter Versandübernahme selbst";
+    shippingStatus = "Versandübernahme erreicht, Kunde möchte den Versand aber selbst organisieren und bezahlen";
+    if (noHigherOfferMention || customerPaysShippingMention) {
+      shippingStatus += ". Kein höheres Ankaufangebot durch Selbstversand. Versandkosten trägt der Kunde vollständig selbst.";
+    }
+  } else if (/versandlabel|retourenlabel|chiefcards\s+soll\s+ein\s+versandlabel/i.test(compact)) {
+    shippingChoice = "ChiefCards soll Versandlabel bereitstellen";
+    if (!shippingStatus) shippingStatus = "Versandübernahme erreicht, ChiefCards soll ein Versandlabel bereitstellen";
+  }
+
+  return{
+    statedValue:parseEuro((compact.match(/voraussichtliche\s+auszahlung\s*:\s*([\d.,]+\s*€?)/i)||[])[1])||positions.reduce((s,p)=>s+p.total,0),
+    statedCards:intVal((compact.match(/kartenmenge\s*:\s*([\d.]+)/i)||[])[1])||positions.reduce((s,p)=>p.lang==="Zubehör"?s:s+p.qty,0),
+    shippingStatus,
+    shippingChoice,
+    selfShipping: selfShippingMention,
+    noHigherOfferMention,
+    customerPaysShippingMention,
+    positions
+  }
+}
 function analyze(text){const p=parseMail(text), maxAvg=parseFloat($("#avg").value||"0.04"), dev=parseFloat($("#dev").value||"25");const d={nonHolo:0,holoReverse:0,trainer:0,energy:0};let coreVal=0,enJpLow=0,hits=0;for(const x of p.positions){if(x.type==="deNonHolo"){d.nonHolo+=x.qty;coreVal+=x.total}else if(x.type==="deHoloReverse"){d.holoReverse+=x.qty;coreVal+=x.total}else if(x.type==="deTrainer"){d.trainer+=x.qty;coreVal+=x.total}else if(x.type==="deEnergy"){d.energy+=x.qty;coreVal+=x.total}else if(String(x.type).includes("Low Bulk"))enJpLow+=x.qty;else if(String(x.type).includes("Hit")||String(x.type).includes("Full Art")||String(x.type).includes("EX/V"))hits+=x.qty}
 const core=d.nonHolo+d.holoReverse+d.trainer+d.energy, avg=core?coreVal/core:0, rows=[["Non-Holo Pokémon","nonHolo",.7],["Holo & Reverse","holoReverse",.1],["Trainer","trainer",.1],["Energien","energy",.1]].map(r=>{const target=core*r[2], actual=d[r[1]], deviation=target?((actual-target)/target)*100:0;return{label:r[0],actual,target,deviation,level:Math.abs(deviation)>dev?"warn":"good",status:Math.abs(deviation)>dev?(deviation>0?"Zu viel":"Zu wenig"):"Passt"}});let score=55,discount=0,pros=[],cons=[];if(core){pros.push("Deutsche Kernkarten für 100er-Päckchen vorhanden.");score+=10}else{cons.push("Keine deutsche Kernmenge erkannt.");score-=25;discount+=12}if(avg&&avg<=maxAvg){pros.push("Schnitt der deutschen Kernkarten passt.");score+=10}else if(avg>maxAvg){cons.push("Schnitt der deutschen Kernkarten liegt über dem Zielwert.");score-=18;discount+=10}for(const r of rows){
   if(r.level==="warn"){
@@ -79,7 +118,10 @@ const core=d.nonHolo+d.holoReverse+d.trainer+d.energy, avg=core?coreVal/core:0, 
       discount+=5;
     }
   }
-}if(core&&rows.every(r=>r.level==="good")){pros.push("Deutsche Quote liegt nah an 70/10/10/10.");score+=18}if(enJpLow>p.statedCards*.25){cons.push("Viel EN/JP Low-Bulk erkannt. Für dich eher Beifang.");score-=18;discount+=12}else if(enJpLow>p.statedCards*.1){cons.push("EN/JP Low-Bulk ist spürbar vorhanden.");score-=8;discount+=5}if(hits){pros.push("Zusätzliche Hits oder Bonuskarten erkannt.");score+=Math.min(12,hits*.8)}if(p.statedCards<1000){cons.push("Mindestmenge laut Analyse nicht erreicht.");score-=30;discount+=15}score=Math.max(0,Math.min(100,Math.round(score)));discount=Math.max(0,Math.min(35,Math.round(discount)));let grade="D",action="Eher ablehnen";if(score>=82){grade="A";action="Annehmen"}else if(score>=65){grade="B";action="Interessant"}else if(score>=45){grade="C";action="Nachverhandeln"}const max=p.statedValue, rec=Math.round((p.statedValue*(1-discount/100))*2)/2, safe=Math.round((p.statedValue*(1-Math.min(45,discount+10)/100))*2)/2;const reply=`Hi,\n\nvielen Dank für deine Ankaufanfrage.\n\nAuf Basis deiner Angaben würden wir dir vorbehaltlich finaler Prüfung aktuell ${euro.format(rec)} anbieten.\n\nWichtig: Das Angebot gilt unter der Voraussetzung, dass die Karten echt, korrekt sortiert und im Zustand Near Mint sind. Die finale Bestätigung erfolgt nach Eingang und Prüfung der Karten.\n\nLiebe Grüße\nFabian von ChiefCards`;return{type:"bulk",statedValue:p.statedValue,statedCards:p.statedCards,shippingStatus:p.shippingStatus,positions:p.positions,splitDetails:p.positions.map(x=>`${x.label}: ${x.qty} | ${euro.format(x.total)}`).join("\n"),cons,pros,score,grade,recommendedOffer:rec,safeOffer:safe,maxOffer:max,discount,reply,core,avg,rows,sourceText:text}}
+}if(core&&rows.every(r=>r.level==="good")){pros.push("Deutsche Quote liegt nah an 70/10/10/10.");score+=18}if(enJpLow>p.statedCards*.25){cons.push("Viel EN/JP Low-Bulk erkannt. Für dich eher Beifang.");score-=18;discount+=12}else if(enJpLow>p.statedCards*.1){cons.push("EN/JP Low-Bulk ist spürbar vorhanden.");score-=8;discount+=5}if(hits){pros.push("Zusätzliche Hits oder Bonuskarten erkannt.");score+=Math.min(12,hits*.8)}if(p.selfShipping){
+  pros.push("Kunde möchte den Versand trotz erreichter Versandübernahme selbst organisieren. Wichtig: Kein höheres Angebot dadurch, Versandkosten trägt der Kunde selbst.");
+}
+if(p.statedCards<1000){cons.push("Mindestmenge laut Analyse nicht erreicht.");score-=30;discount+=15}score=Math.max(0,Math.min(100,Math.round(score)));discount=Math.max(0,Math.min(35,Math.round(discount)));let grade="D",action="Eher ablehnen";if(score>=82){grade="A";action="Annehmen"}else if(score>=65){grade="B";action="Interessant"}else if(score>=45){grade="C";action="Nachverhandeln"}const max=p.statedValue, rec=Math.round((p.statedValue*(1-discount/100))*2)/2, safe=Math.round((p.statedValue*(1-Math.min(45,discount+10)/100))*2)/2;const reply=`Hi,\n\nvielen Dank für deine Ankaufanfrage.\n\nAuf Basis deiner Angaben würden wir dir vorbehaltlich finaler Prüfung aktuell ${euro.format(rec)} anbieten.\n\nWichtig: Das Angebot gilt unter der Voraussetzung, dass die Karten echt, korrekt sortiert und im Zustand Near Mint sind. Die finale Bestätigung erfolgt nach Eingang und Prüfung der Karten.\n\nLiebe Grüße\nFabian von ChiefCards`;return{type:"bulk",statedValue:p.statedValue,statedCards:p.statedCards,shippingStatus:p.shippingStatus,positions:p.positions,splitDetails:p.positions.map(x=>`${x.label}: ${x.qty} | ${euro.format(x.total)}`).join("\n"),cons,pros,score,grade,recommendedOffer:rec,safeOffer:safe,maxOffer:max,discount,reply,core,avg,rows,sourceText:text}}
 function render(r){last=r;$("#grade").textContent=r.grade;$("#action").textContent=r.grade+" · "+(r.score)+"/100";$("#val").textContent=euro.format(r.statedValue);$("#cards").textContent=num.format(r.statedCards);$("#decore").textContent=num.format(r.core);$("#deavg").textContent=euro.format(r.avg);$("#safe").textContent=euro.format(r.safeOffer);$("#rec").textContent=euro.format(r.recommendedOffer);$("#max").textContent=euro.format(r.maxOffer);$("#disc").textContent=r.discount+" %";$("#offerNote").textContent=r.discount?("Abschlag wegen Auffälligkeiten: "+r.cons.slice(0,2).join(" ")):"Keine großen Auffälligkeiten.";$("#reply").textContent=r.reply;$("#pros").innerHTML=r.pros.map(x=>`<li>${esc(x)}</li>`).join("");$("#cons").innerHTML=r.cons.map(x=>`<li>${esc(x)}</li>`).join("");$("#dist").innerHTML=r.rows.map(x=>`<tr><td>${esc(x.label)}</td><td class="right">${num.format(x.actual)}</td><td class="right">${num.format(Math.round(x.target))}</td><td class="right">${x.target?Math.round(x.deviation)+" %":"–"}</td><td>${esc(x.status)}</td></tr>`).join("");$("#positions").innerHTML=r.positions.map(x=>`<tr><td>${esc(x.label)}</td><td class="right">${num.format(x.qty)}</td><td class="right">${euro.format(x.total)}</td></tr>`).join("")}
 function getLabeledValue(text, labels) {
   const lines = String(text || "").split(/\r?\n/).map(line => line.trim());
