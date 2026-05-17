@@ -18,6 +18,11 @@
           <h2>Mailtext einfügen</h2>
           <textarea id="mail"></textarea>
           <div class="settings">
+            <div class="field"><label>Kundenname optional</label><input id="customerName" placeholder="z. B. Max Mustermann"></div>
+            <div class="field"><label>E-Mail optional</label><input id="customerEmail" type="email" placeholder="kunde@mail.de"></div>
+            <div class="field"><label>Auszahlung optional</label><input id="payoutMethod" placeholder="PayPal oder IBAN"></div>
+          </div>
+          <div class="settings">
             <div class="field"><label>Interne Versandkosten</label><input id="shipping" type="number" value="6" step="0.5"></div>
             <div class="field"><label>Max. Schnitt perfekte Quote</label><input id="avg" type="number" value="0.04" step="0.001"></div>
             <div class="field"><label>Warnung ab Abweichung %</label><input id="dev" type="number" value="25" step="1"></div>
@@ -52,10 +57,57 @@ function parseMail(text){const compact=String(text||"").replace(/\u00a0/g," ").r
 function analyze(text){const p=parseMail(text), maxAvg=parseFloat($("#avg").value||"0.04"), dev=parseFloat($("#dev").value||"25");const d={nonHolo:0,holoReverse:0,trainer:0,energy:0};let coreVal=0,enJpLow=0,hits=0;for(const x of p.positions){if(x.type==="deNonHolo"){d.nonHolo+=x.qty;coreVal+=x.total}else if(x.type==="deHoloReverse"){d.holoReverse+=x.qty;coreVal+=x.total}else if(x.type==="deTrainer"){d.trainer+=x.qty;coreVal+=x.total}else if(x.type==="deEnergy"){d.energy+=x.qty;coreVal+=x.total}else if(String(x.type).includes("Low Bulk"))enJpLow+=x.qty;else if(String(x.type).includes("Hit")||String(x.type).includes("Full Art")||String(x.type).includes("EX/V"))hits+=x.qty}
 const core=d.nonHolo+d.holoReverse+d.trainer+d.energy, avg=core?coreVal/core:0, rows=[["Non-Holo Pokémon","nonHolo",.7],["Holo & Reverse","holoReverse",.1],["Trainer","trainer",.1],["Energien","energy",.1]].map(r=>{const target=core*r[2], actual=d[r[1]], deviation=target?((actual-target)/target)*100:0;return{label:r[0],actual,target,deviation,level:Math.abs(deviation)>dev?"warn":"good",status:Math.abs(deviation)>dev?(deviation>0?"Zu viel":"Zu wenig"):"Passt"}});let score=55,discount=0,pros=[],cons=[];if(core){pros.push("Deutsche Kernkarten für 100er-Päckchen vorhanden.");score+=10}else{cons.push("Keine deutsche Kernmenge erkannt.");score-=25;discount+=12}if(avg&&avg<=maxAvg){pros.push("Schnitt der deutschen Kernkarten passt.");score+=10}else if(avg>maxAvg){cons.push("Schnitt der deutschen Kernkarten liegt über dem Zielwert.");score-=18;discount+=10}for(const r of rows){if(r.level==="warn"){cons.push(`${r.label} weicht mit ${Math.round(r.deviation)} % von der Zielquote ab.`);score-=8;discount+=5}}if(core&&rows.every(r=>r.level==="good")){pros.push("Deutsche Quote liegt nah an 70/10/10/10.");score+=18}if(enJpLow>p.statedCards*.25){cons.push("Viel EN/JP Low-Bulk erkannt. Für dich eher Beifang.");score-=18;discount+=12}else if(enJpLow>p.statedCards*.1){cons.push("EN/JP Low-Bulk ist spürbar vorhanden.");score-=8;discount+=5}if(hits){pros.push("Zusätzliche Hits oder Bonuskarten erkannt.");score+=Math.min(12,hits*.8)}if(p.statedCards<1000){cons.push("Mindestmenge laut Analyse nicht erreicht.");score-=30;discount+=15}score=Math.max(0,Math.min(100,Math.round(score)));discount=Math.max(0,Math.min(35,Math.round(discount)));let grade="D",action="Eher ablehnen";if(score>=82){grade="A";action="Annehmen"}else if(score>=65){grade="B";action="Interessant"}else if(score>=45){grade="C";action="Nachverhandeln"}const max=p.statedValue, rec=Math.round((p.statedValue*(1-discount/100))*2)/2, safe=Math.round((p.statedValue*(1-Math.min(45,discount+10)/100))*2)/2;const reply=`Hi,\n\nvielen Dank für deine Ankaufanfrage.\n\nAuf Basis deiner Angaben würden wir dir vorbehaltlich finaler Prüfung aktuell ${euro.format(rec)} anbieten.\n\nWichtig: Das Angebot gilt unter der Voraussetzung, dass die Karten echt, korrekt sortiert und im Zustand Near Mint sind. Die finale Bestätigung erfolgt nach Eingang und Prüfung der Karten.\n\nLiebe Grüße\nFabian von ChiefCards`;return{type:"bulk",statedValue:p.statedValue,statedCards:p.statedCards,shippingStatus:p.shippingStatus,positions:p.positions,splitDetails:p.positions.map(x=>`${x.label}: ${x.qty} | ${euro.format(x.total)}`).join("\n"),cons,pros,score,grade,recommendedOffer:rec,safeOffer:safe,maxOffer:max,discount,reply,core,avg,rows,sourceText:text}}
 function render(r){last=r;$("#grade").textContent=r.grade;$("#action").textContent=r.grade+" · "+(r.score)+"/100";$("#val").textContent=euro.format(r.statedValue);$("#cards").textContent=num.format(r.statedCards);$("#decore").textContent=num.format(r.core);$("#deavg").textContent=euro.format(r.avg);$("#safe").textContent=euro.format(r.safeOffer);$("#rec").textContent=euro.format(r.recommendedOffer);$("#max").textContent=euro.format(r.maxOffer);$("#disc").textContent=r.discount+" %";$("#offerNote").textContent=r.discount?("Abschlag wegen Auffälligkeiten: "+r.cons.slice(0,2).join(" ")):"Keine großen Auffälligkeiten.";$("#reply").textContent=r.reply;$("#pros").innerHTML=r.pros.map(x=>`<li>${esc(x)}</li>`).join("");$("#cons").innerHTML=r.cons.map(x=>`<li>${esc(x)}</li>`).join("");$("#dist").innerHTML=r.rows.map(x=>`<tr><td>${esc(x.label)}</td><td class="right">${num.format(x.actual)}</td><td class="right">${num.format(Math.round(x.target))}</td><td class="right">${x.target?Math.round(x.deviation)+" %":"–"}</td><td>${esc(x.status)}</td></tr>`).join("");$("#positions").innerHTML=r.positions.map(x=>`<tr><td>${esc(x.label)}</td><td class="right">${num.format(x.qty)}</td><td class="right">${euro.format(x.total)}</td></tr>`).join("")}
-function exportObj(){if(!last){toast("Erst analysieren");return null}return{type:"bulk",date:new Date().toISOString().slice(0,10),status:"Neu",cardCount:last.statedCards,calcValue:last.statedValue,score:last.grade,recommendedOffer:last.recommendedOffer,ownOffer:last.recommendedOffer,shippingStatus:last.shippingStatus,splitDetails:last.splitDetails,issues:last.cons.join("\n"),sourceText:last.sourceText,nextStep:"Angebot prüfen / senden",positions:last.positions,pros:last.pros,cons:last.cons}}
+function extractEmail(text){
+  const m = String(text || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return m ? m[0] : "";
+}
+function extractName(text){
+  const raw = String(text || "");
+  const patterns = [
+    /(?:^|\n)\s*name\s*:\s*([^\n\r]+)/i,
+    /(?:^|\n)\s*kundenname\s*:\s*([^\n\r]+)/i,
+    /(?:^|\n)\s*von\s*:\s*("?)([^"<\n\r]+)\1\s*<[^>]+>/i,
+    /(?:^|\n)\s*from\s*:\s*("?)([^"<\n\r]+)\1\s*<[^>]+>/i
+  ];
+  for (const p of patterns) {
+    const m = raw.match(p);
+    if (m) {
+      const value = (m[2] || m[1] || "").trim().replace(/^["']|["']$/g, "");
+      if (value && !value.includes("@")) return value;
+    }
+  }
+  return "";
+}
+function exportObj(){
+  if(!last){toast("Erst analysieren");return null}
+  const manualName = document.querySelector("#customerName").value.trim();
+  const manualEmail = document.querySelector("#customerEmail").value.trim();
+  const manualPayout = document.querySelector("#payoutMethod").value.trim();
+  return {
+    type:"bulk",
+    name: manualName || extractName(last.sourceText),
+    email: manualEmail || extractEmail(last.sourceText),
+    payoutMethod: manualPayout,
+    date:new Date().toISOString().slice(0,10),
+    status:"Neu",
+    cardCount:last.statedCards,
+    calcValue:last.statedValue,
+    score:last.grade,
+    recommendedOffer:last.recommendedOffer,
+    ownOffer:last.recommendedOffer,
+    shippingStatus:last.shippingStatus,
+    splitDetails:last.splitDetails,
+    issues:last.cons.join("\n"),
+    sourceText:last.sourceText,
+    nextStep:"Angebot prüfen / senden",
+    positions:last.positions,
+    pros:last.pros,
+    cons:last.cons
+  }
+}
 async function copyExport(){const o=exportObj();if(!o)return;await navigator.clipboard.writeText(JSON.stringify(o,null,2));toast("Export kopiert")}
 function downloadExport(){const o=exportObj();if(!o)return;const blob=new Blob([JSON.stringify(o,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="bulk-analyse-export.json";a.click();URL.revokeObjectURL(url)}
 function esc(v){return String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}function toast(t){const el=$("#toast");el.textContent=t;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),1800)}
-$("#analyze").addEventListener("click",()=>render(analyze($("#mail").value)));$("#copyExport").addEventListener("click",copyExport);$("#downloadExport").addEventListener("click",downloadExport);$("#clear").addEventListener("click",()=>{$("#mail").value="";last=null;toast("Geleert")});
+$("#analyze").addEventListener("click",()=>render(analyze($("#mail").value)));$("#copyExport").addEventListener("click",copyExport);$("#downloadExport").addEventListener("click",downloadExport);$("#clear").addEventListener("click",()=>{$("#mail").value="";$("#customerName").value="";$("#customerEmail").value="";$("#payoutMethod").value="";last=null;toast("Geleert")});
 </script>
 </body></html>
